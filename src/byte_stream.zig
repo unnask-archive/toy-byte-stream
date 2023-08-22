@@ -13,6 +13,10 @@ const testing = std.testing;
 // grow the backing array, or assume capacity as necessary.
 //
 
+pub fn ByteStream(comptime Buffer: type) type {
+    return struct {};
+}
+
 export fn add(a: i32, b: i32) i32 {
     return a + b;
 }
