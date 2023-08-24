@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
 // this should follow the general stream ideas as seen in std.io.
@@ -13,8 +14,38 @@ const testing = std.testing;
 // grow the backing array, or assume capacity as necessary.
 //
 
-pub fn ByteStream(comptime Buffer: type) type {
-    return struct {};
+//todo: play around with whether keeping the allocator reference
+//      is nicer to use
+pub fn ByteStream() type {
+    return struct {
+        const Self = @This();
+
+        allocator: Allocator,
+        buffer: []u8,
+        len: usize,
+
+        pub fn init(allocator: Allocator) Self {
+            return Self{
+                .allocator = allocator,
+                .len = 0,
+                .buffer = &[_]u8{}, // zero sized []u8 constant
+            };
+        }
+
+        pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
+            _ = capacity;
+            var self = Self.init(allocator);
+            _ = self;
+        }
+
+        pub fn ensureCapacity(self: *Self, capacity: usize) Allocator.Error!void {
+            if (self.buffer.len >= capacity) {
+                return;
+            }
+
+            //todo implement
+        }
+    };
 }
 
 export fn add(a: i32, b: i32) i32 {
