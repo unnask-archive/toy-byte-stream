@@ -64,6 +64,8 @@ pub fn ByteStream() type {
             }
         }
 
+        //implements std.io.Reader API
+        //implements std.io.Writer API
         pub const ReadError = error{};
         pub const WriteError = error{};
 
@@ -93,6 +95,7 @@ pub fn ByteStream() type {
             for (self.buffer[self.pos..end], 0..) |e, i| {
                 dest[i] = e;
             }
+            self.pos = end;
 
             return sz;
         }
@@ -110,8 +113,43 @@ pub fn ByteStream() type {
         }
 
         pub fn writeAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
-            _ = bytes;
+            std.debug.assert(self.buffer.len >= self.pos + bytes.len);
+
+            @memcpy(self.buffer[self.pos..][0..bytes.len], bytes[0..]);
+
+            self.pos += bytes.len;
+
+            return bytes.len;
+        }
+
+        // implements std.io.SeekableStream api
+        pub const SeekError = error{};
+        pub const GetSeekPosError = error{};
+
+        pub const SeekableStream = io.SeekableStream(*Self, SeekError, GetSeekPosError, seekTo, seekBy, getPos, getEndPos);
+
+        pub fn seekableStream(self: *Self) SeekableStream {
+            return .{ .context = self };
+        }
+
+        pub fn seekTo(self: *Self, pos: u64) SeekError!void {
+            _ = pos;
             _ = self;
+            //todo: implement
+        }
+
+        pub fn seekBy(self: *Self, pos: i64) SeekError!void {
+            _ = pos;
+            _ = self;
+            //todo: implement
+        }
+
+        pub fn getEndPos(self: *Self) GetSeekPosError!u64 {
+            return self.buffer.len;
+        }
+
+        pub fn getPos(self: *Self) GetSeekPosError!u64 {
+            return self.pos;
         }
     };
 }
