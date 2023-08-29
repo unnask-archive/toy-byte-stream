@@ -133,15 +133,26 @@ pub fn ByteStream() type {
         }
 
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
-            _ = pos;
-            _ = self;
-            //todo: implement
+            self.pos = if (std.math.cast(usize, pos)) |p| {
+                @min(self.buffer.len, p);
+            } else {
+                self.buffer.len;
+            };
         }
 
-        pub fn seekBy(self: *Self, pos: i64) SeekError!void {
-            _ = pos;
-            _ = self;
-            //todo: implement
+        pub fn seekBy(self: *Self, amount: i64) SeekError!void {
+            // annoyingly, i64 doesn't platform well
+
+            self.pos = if (amount < 0) {
+                //the std.math functions nicely tell us when a cast fails,
+                // whereas the builtins will cause UB when a number doesn't fit
+                const abs = std.math.cast(usize, std.math.absCast(amount)) orelse std.math.maxInt(usize);
+                self.pos -| abs;
+            } else {
+                const cast = std.math.cast(usize, amount) orelse std.math.maxInt(usize);
+                const tmp = cast +| self.pos;
+                @min(self.buffer.len, tmp);
+            };
         }
 
         pub fn getEndPos(self: *Self) GetSeekPosError!u64 {
@@ -153,3 +164,5 @@ pub fn ByteStream() type {
         }
     };
 }
+
+//tests
