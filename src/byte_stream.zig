@@ -37,7 +37,15 @@ pub fn ByteStream() type {
 
         pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
             var self = Self.init(allocator);
-            self.ensureCapacity(capacity);
+            try self.ensureCapacity(capacity);
+
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.len = 0;
+            self.pos = 0;
+            self.allocator.free(self.buffer);
         }
 
         pub fn ensureCapacity(self: *Self, capacity: usize) Allocator.Error!void {
@@ -47,7 +55,9 @@ pub fn ByteStream() type {
 
             const tmp = self.buffer;
 
-            if (!self.allocator.resize(tmp, capacity)) {
+            if (self.allocator.resize(tmp, capacity)) {
+                self.buffer.len = capacity;
+            } else {
                 const new = try self.allocator.alloc(u8, capacity);
 
                 //todo: measure:
@@ -67,7 +77,7 @@ pub fn ByteStream() type {
         //implements std.io.Reader API
         //implements std.io.Writer API
         pub const ReadError = error{};
-        pub const WriteError = error{};
+        pub const WriteError = error{allocFailed};
 
         //todo: Maybe make a new reader and writer?
         //      For now, this is fine
@@ -106,18 +116,18 @@ pub fn ByteStream() type {
                 //todo: byte_stream is meant for creating and reading network
                 //      messages, so is it necessary to put any more
                 //      thought in to the grow factor?
-                self.ensureCapacity(sz);
+                self.ensureCapacity(sz) catch return WriteError.allocFailed;
             }
 
-            try self.writeAssumeCapacity(bytes);
+            return try self.writeAssumeCapacity(bytes);
         }
 
         pub fn writeAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
-            std.debug.assert(self.buffer.len >= self.pos + bytes.len);
+            std.debug.assert(self.buffer.len >= self.len + bytes.len);
 
-            @memcpy(self.buffer[self.pos..][0..bytes.len], bytes[0..]);
+            @memcpy(self.buffer[self.len..][0..bytes.len], bytes[0..]);
 
-            self.pos += bytes.len;
+            self.len += bytes.len;
 
             return bytes.len;
         }
@@ -166,3 +176,169 @@ pub fn ByteStream() type {
 }
 
 //tests
+test "byte-stream/init" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.buffer.len, 0);
+}
+
+test "byte-stream/initCapacity" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 123);
+    defer stream.deinit();
+
+    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.buffer.len, 123);
+}
+
+test "byte-stream/ensureCapacity" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.buffer.len, 0);
+
+    {
+        try stream.ensureCapacity(250);
+
+        try testing.expectEqual(stream.len, 0);
+        try testing.expectEqual(stream.pos, 0);
+        try testing.expectEqual(stream.buffer.len, 250);
+    }
+
+    //trying to guarantee an in place resize for the test
+    {
+        try stream.ensureCapacity(251);
+
+        try testing.expectEqual(stream.len, 0);
+        try testing.expectEqual(stream.pos, 0);
+        try testing.expectEqual(stream.buffer.len, 251);
+    }
+}
+
+test "byte-stream/write with space" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.write(&bytes);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+}
+
+test "byte-stream/write multiple" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.write(&bytes);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+
+    var start = stream.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.write(&bytes2);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 13);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+}
+
+test "byte-stream/write force grow" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.write(&bytes);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(stream.buffer.len, 7);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+
+    var start = stream.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.write(&bytes2);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 13);
+    try testing.expectEqual(stream.buffer.len, 13);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+}
+
+test "byte-stream/writeAssumeCapacity with space" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.writeAssumeCapacity(&bytes);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+
+    var start = stream.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.writeAssumeCapacity(&bytes2);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.len, 13);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+}
+
+test "byte-stream/writeAssumeCapacity over space" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = bytes;
+
+    //todo: implement an actual test once we can test for panics
+    // Looks like there's no way - yet - to test for panics
+    //testing.expectPanic(try stream.writeAssumeCapacity(&bytes));
+}
+
+test "byte-stream/read" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.write(&bytes);
+
+    var dest: [10]u8 = undefined;
+    var read = stream.read(&dest);
+
+    try testing.expectEqual(read, 10);
+    try testing.expectEqualSlices(u8, &bytes, &dest);
+    try testing.expectEqual(stream.pos, 10);
+    try testing.expectEqual(stream.len, 10);
+}
+
+test "byte-stream/read multiple" {}
+
+test "byte-stream/seekTo" {}
+
+test "byte-stream/seekBy" {}
+
+test "byte-stream/getEndPos" {}
+
+test "byte-stream/getPos" {}
