@@ -23,25 +23,16 @@ pub fn ByteStream() type {
 
         allocator: Allocator,
 
-        //Interestingly, ArrayList stores a variable "capacity", and then updates
-        // the buffer slices len member to track the end of the "size".
-        //
-        //Reasoning appears to be Generally nicer user API for the buffer
-        //
-        //This has some consequences, like having to slightly awkward reslice
-        //the pointer when needing to grab more memory above capacity, or free.
-        //
-        //todo: I should probably spend some time changing the code to work the same way.
-        len: usize,
+        capacity: usize,
         pos: usize,
-        buffer: []u8,
+        bytes: []u8,
 
         pub fn init(allocator: Allocator) Self {
             return Self{
                 .allocator = allocator,
-                .len = 0,
+                .capacity = 0,
                 .pos = 0,
-                .buffer = &[_]u8{}, // zero sized []u8 constant
+                .bytes = &[_]u8{}, // zero sized []u8 constant
             };
         }
 
@@ -52,23 +43,25 @@ pub fn ByteStream() type {
             return self;
         }
 
-        pub fn deinit(self: *Self) void {
-            self.len = 0;
-            self.pos = 0;
-            self.allocator.free(self.buffer);
+        fn backingSlice(self: *Self) []u8 {
+            return self.bytes.ptr[0..self.capacity];
         }
 
-        pub fn ensureCapacity(self: *Self, capacity: usize) Allocator.Error!void {
-            if (self.buffer.len >= capacity) {
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.backingSlice());
+            self.capacity = 0;
+            self.pos = 0;
+        }
+
+        pub fn ensureCapacity(self: *Self, new_capacity: usize) Allocator.Error!void {
+            if (self.capacity >= new_capacity) {
                 return;
             }
 
-            const tmp = self.buffer;
+            var tmp = self.backingSlice();
 
-            if (self.allocator.resize(tmp, capacity)) {
-                self.buffer.len = capacity;
-            } else {
-                const new = try self.allocator.alloc(u8, capacity);
+            if (!self.allocator.resize(tmp, new_capacity)) {
+                const new = try self.allocator.alloc(u8, new_capacity);
 
                 //todo: measure:
                 //    zig doc says to not use memcpy for safety reasons,
@@ -76,11 +69,12 @@ pub fn ByteStream() type {
                 //    @memcpy anyway. But maybe confirm
 
                 //@memcpy(new[0..self.buffer.len], self.buffer);
-                for (self.buffer[0..], 0..) |e, i| {
+                for (self.bytes[0..], 0..) |e, i| {
                     new[i] = e;
                 }
                 self.allocator.free(tmp);
-                self.buffer = new;
+                self.bytes.ptr = new.ptr;
+                self.capacity = new_capacity;
             }
         }
 
@@ -108,7 +102,7 @@ pub fn ByteStream() type {
         }
 
         pub fn read(self: *Self, dest: []u8) ReadError!usize {
-            const sz = @min(dest.len, self.len - self.pos);
+            const sz = @min(dest.len, self.bytes.len - self.pos);
             const end = self.pos + sz;
 
             //@memcpy(dest[0..sz], self.buffer[self.pos..end]);
@@ -121,8 +115,8 @@ pub fn ByteStream() type {
         }
 
         pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
-            const sz = self.len + bytes.len;
-            if (self.buffer.len < sz) {
+            const sz = self.pos + bytes.len;
+            if (self.capacity < sz) {
                 //todo: byte_stream is meant for creating and reading network
                 //      messages, so is it necessary to put any more
                 //      thought in to the grow factor?
@@ -133,11 +127,18 @@ pub fn ByteStream() type {
         }
 
         pub fn writeAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
-            std.debug.assert(self.buffer.len >= self.len + bytes.len);
+            std.debug.assert(self.capacity >= self.pos + bytes.len);
 
-            @memcpy(self.buffer[self.len..][0..bytes.len], bytes[0..]);
+            const end = self.pos + bytes.len;
+            var tmp_dest = self.bytes.ptr[0..self.capacity][self.pos..end];
+            @memcpy(tmp_dest[0..], bytes[0..]);
 
-            self.len += bytes.len;
+            self.pos = end;
+
+            //Most of the time, making network payloads will be just writing
+            //bytes to a buffer sequentially, so this seems like a needless branch
+            //for a feature unlikely to be needed
+            self.bytes.len = @max(self.pos, self.bytes.len);
 
             return bytes.len;
         }
