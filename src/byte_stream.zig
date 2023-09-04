@@ -308,6 +308,9 @@ test "byte-stream/appendingWrite multiple" {
     try testing.expectEqual(written, 6);
     try testing.expectEqual(stream.bytes.len, 13);
     try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
 }
 
 test "byte-stream/appendingWrite force grow" {
@@ -333,6 +336,9 @@ test "byte-stream/appendingWrite force grow" {
     try testing.expectEqual(stream.bytes.len, 13);
     try testing.expectEqual(written, 6);
     try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
 }
 
 test "byte-stream/appendingWriteAssumeCapacity with space" {
@@ -358,6 +364,9 @@ test "byte-stream/appendingWriteAssumeCapacity with space" {
     try testing.expectEqual(written, 6);
     try testing.expectEqual(stream.bytes.len, 13);
     try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
 }
 
 test "byte-stream/appendingWriteAssumeCapacity over space" {
