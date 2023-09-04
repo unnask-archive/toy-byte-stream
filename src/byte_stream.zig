@@ -22,6 +22,16 @@ pub fn ByteStream() type {
         const Self = @This();
 
         allocator: Allocator,
+
+        //Interestingly, ArrayList stores a variable "capacity", and then updates
+        // the buffer slices len member to track the end of the "size".
+        //
+        //Reasoning appears to be Generally nicer user API for the buffer
+        //
+        //This has some consequences, like having to slightly awkward reslice
+        //the pointer when needing to grab more memory above capacity, or free.
+        //
+        //todo: I should probably spend some time changing the code to work the same way.
         len: usize,
         pos: usize,
         buffer: []u8,
@@ -111,7 +121,7 @@ pub fn ByteStream() type {
         }
 
         pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
-            const sz = self.buffer.len + bytes.len;
+            const sz = self.len + bytes.len;
             if (self.buffer.len < sz) {
                 //todo: byte_stream is meant for creating and reading network
                 //      messages, so is it necessary to put any more
@@ -144,9 +154,9 @@ pub fn ByteStream() type {
 
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
             self.pos = if (std.math.cast(usize, pos)) |p| {
-                @min(self.buffer.len, p);
+                @min(self.len, p);
             } else {
-                self.buffer.len;
+                self.len;
             };
         }
 
@@ -161,12 +171,12 @@ pub fn ByteStream() type {
             } else {
                 const cast = std.math.cast(usize, amount) orelse std.math.maxInt(usize);
                 const tmp = cast +| self.pos;
-                @min(self.buffer.len, tmp);
+                @min(self.len, tmp);
             };
         }
 
         pub fn getEndPos(self: *Self) GetSeekPosError!u64 {
-            return self.buffer.len;
+            return self.len;
         }
 
         pub fn getPos(self: *Self) GetSeekPosError!u64 {
@@ -231,6 +241,7 @@ test "byte-stream/write with space" {
     try testing.expectEqual(stream.pos, 0);
     try testing.expectEqual(stream.len, 7);
     try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.buffer.len, 50);
     try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
 }
 
@@ -245,6 +256,7 @@ test "byte-stream/write multiple" {
     try testing.expectEqual(stream.pos, 0);
     try testing.expectEqual(stream.len, 7);
     try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.buffer.len, 50);
     try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
 
     var start = stream.len;
@@ -254,6 +266,7 @@ test "byte-stream/write multiple" {
     try testing.expectEqual(stream.pos, 0);
     try testing.expectEqual(stream.len, 13);
     try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.buffer.len, 50);
     try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
 }
 
@@ -293,6 +306,7 @@ test "byte-stream/writeAssumeCapacity with space" {
     try testing.expectEqual(stream.pos, 0);
     try testing.expectEqual(stream.len, 7);
     try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.buffer.len, 50);
     try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
 
     var start = stream.len;
@@ -302,6 +316,7 @@ test "byte-stream/writeAssumeCapacity with space" {
     try testing.expectEqual(stream.pos, 0);
     try testing.expectEqual(stream.len, 13);
     try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.buffer.len, 50);
     try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
 }
 
@@ -333,12 +348,34 @@ test "byte-stream/read" {
     try testing.expectEqual(stream.len, 10);
 }
 
-test "byte-stream/read multiple" {}
+test "byte-stream/read multiple" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.write(&bytes);
+
+    var dest1: [5]u8 = undefined;
+    var dest2: [4]u8 = undefined;
+
+    var read1 = stream.read(&dest1);
+    var read2 = stream.read(&dest2);
+
+    try testing.expectEqual(read1, 5);
+    try testing.expectEqualSlices(u8, &dest1, bytes[0..5]);
+
+    try testing.expectEqual(read2, 4);
+    try testing.expectEqualSlices(u8, &dest2, bytes[5..9]);
+
+    try testing.expectEqual(stream.pos, 9);
+    try testing.expectEqual(stream.len, 10);
+    try testing.expectEqual(stream.buffer.len, 50);
+}
 
 test "byte-stream/seekTo" {}
 
-test "byte-stream/seekBy" {}
+//test "byte-stream/seekBy" {}
 
-test "byte-stream/getEndPos" {}
+//test "byte-stream/getEndPos" {}
 
-test "byte-stream/getPos" {}
+//test "byte-stream/getPos" {}
