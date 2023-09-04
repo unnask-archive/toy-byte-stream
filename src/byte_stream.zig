@@ -60,7 +60,9 @@ pub fn ByteStream() type {
 
             var tmp = self.backingSlice();
 
-            if (!self.allocator.resize(tmp, new_capacity)) {
+            if (self.allocator.resize(tmp, new_capacity)) {
+                self.capacity = new_capacity;
+            } else {
                 const new = try self.allocator.alloc(u8, new_capacity);
 
                 //todo: measure:
@@ -86,27 +88,42 @@ pub fn ByteStream() type {
         //todo: Maybe make a new reader and writer?
         //      For now, this is fine
         pub const Reader = io.Reader(*Self, ReadError, read);
-        pub const Writer = io.Writer(*Self, WriteError, write);
-        pub const WriterAssumeCapacity = io.writer(*Self, WriteError, writeAssumeCapacity);
+        pub const AppendingWriter = io.Writer(*Self, WriteError, appendingWrite);
+        pub const AppendingWriterAssumeCapacity = io.writer(*Self, WriteError, appendingWriteAssumeCapacity);
+        pub const SeekableWriter = io.Writer(*Self, WriteError, seekableWrite);
+        pub const SeekableWriterAssumeCapacity = io.Writer(*Self, WriteError, seekableWriteAssumeCapacity);
+        pub const Writer = AppendingWriter;
+        pub const WriterAssumeCapacity = AppendingWriterAssumeCapacity;
 
         pub fn reader(self: *Self) Reader {
             return .{ .context = self };
         }
 
-        pub fn writer(self: *Self) Writer {
+        pub fn appendingWriter(self: *Self) AppendingWriter {
             return .{ .context = self };
         }
 
-        pub fn writerAssumeCapacity(self: *Self) WriterAssumeCapacity {
+        pub fn appendingWriterAssumeCapacity(self: *Self) AppendingWriterAssumeCapacity {
             return .{ .context = self };
         }
+
+        pub fn seekableWriter(self: *Self) SeekableWriter {
+            return .{ .context = self };
+        }
+
+        pub fn seekableWriterAssumeCapacity(self: *Self) SeekableWriterAssumeCapacity {
+            return .{ .context = self };
+        }
+
+        pub const writer = appendingWriter;
+        pub const writerAssumeCapacity = appendingWriterAssumeCapacity;
 
         pub fn read(self: *Self, dest: []u8) ReadError!usize {
             const sz = @min(dest.len, self.bytes.len - self.pos);
             const end = self.pos + sz;
 
             //@memcpy(dest[0..sz], self.buffer[self.pos..end]);
-            for (self.buffer[self.pos..end], 0..) |e, i| {
+            for (self.bytes[self.pos..end], 0..) |e, i| {
                 dest[i] = e;
             }
             self.pos = end;
@@ -114,31 +131,53 @@ pub fn ByteStream() type {
             return sz;
         }
 
-        pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
+        pub fn appendingWrite(self: *Self, bytes: []const u8) WriteError!usize {
+            const sz = self.bytes.len + bytes.len;
+            if (self.capacity < sz) {
+                //todo: probably a better way to do this error
+                self.ensureCapacity(sz) catch return WriteError.allocFailed;
+            }
+
+            return self.appendingWriteAssumeCapacity(bytes);
+        }
+
+        pub fn appendingWriteAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
+            std.debug.assert(self.capacity >= self.bytes.len + bytes.len);
+
+            const end = self.bytes.len + bytes.len;
+            var tmp_dest = self.bytes.ptr[0..end][self.bytes.len..];
+            @memcpy(tmp_dest[0..], bytes[0..]);
+
+            self.bytes.len = end;
+
+            return bytes.len;
+        }
+
+        pub const write = appendingWrite;
+        pub const writeAssumeCapacity = appendingWriteAssumeCapacity;
+
+        pub fn seekableWrite(self: *Self, bytes: []const u8) WriteError!usize {
             const sz = self.pos + bytes.len;
             if (self.capacity < sz) {
                 //todo: byte_stream is meant for creating and reading network
                 //      messages, so is it necessary to put any more
                 //      thought in to the grow factor?
+                //todo: probably a better way to do this error
                 self.ensureCapacity(sz) catch return WriteError.allocFailed;
             }
 
-            return try self.writeAssumeCapacity(bytes);
+            return try self.seekableWriteAssumeCapacity(bytes);
         }
 
-        pub fn writeAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
+        pub fn seekableWriteAssumeCapacity(self: *Self, bytes: []const u8) WriteError!usize {
             std.debug.assert(self.capacity >= self.pos + bytes.len);
 
             const end = self.pos + bytes.len;
-            var tmp_dest = self.bytes.ptr[0..self.capacity][self.pos..end];
+            var tmp_dest = self.bytes.ptr[0..end][self.pos..];
             @memcpy(tmp_dest[0..], bytes[0..]);
 
             self.pos = end;
-
-            //Most of the time, making network payloads will be just writing
-            //bytes to a buffer sequentially, so this seems like a needless branch
-            //for a feature unlikely to be needed
-            self.bytes.len = @max(self.pos, self.bytes.len);
+            self.bytes.len = @max(self.bytes.len, end);
 
             return bytes.len;
         }
@@ -155,9 +194,9 @@ pub fn ByteStream() type {
 
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
             self.pos = if (std.math.cast(usize, pos)) |p| {
-                @min(self.len, p);
+                @min(self.bytes.len, p);
             } else {
-                self.len;
+                self.bytes.len;
             };
         }
 
@@ -172,12 +211,12 @@ pub fn ByteStream() type {
             } else {
                 const cast = std.math.cast(usize, amount) orelse std.math.maxInt(usize);
                 const tmp = cast +| self.pos;
-                @min(self.len, tmp);
+                @min(self.bytes.len, tmp);
             };
         }
 
         pub fn getEndPos(self: *Self) GetSeekPosError!u64 {
-            return self.len;
+            return self.bytes.len;
         }
 
         pub fn getPos(self: *Self) GetSeekPosError!u64 {
@@ -191,137 +230,137 @@ test "byte-stream/init" {
     var stream = ByteStream().init(std.testing.allocator);
     defer stream.deinit();
 
-    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.capacity, 0);
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.buffer.len, 0);
+    try testing.expectEqual(stream.bytes.len, 0);
 }
 
 test "byte-stream/initCapacity" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 123);
     defer stream.deinit();
 
-    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.capacity, 123);
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.buffer.len, 123);
+    try testing.expectEqual(stream.bytes.len, 0);
 }
 
 test "byte-stream/ensureCapacity" {
     var stream = ByteStream().init(std.testing.allocator);
     defer stream.deinit();
 
-    try testing.expectEqual(stream.len, 0);
+    try testing.expectEqual(stream.capacity, 0);
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.buffer.len, 0);
+    try testing.expectEqual(stream.bytes.len, 0);
 
     {
         try stream.ensureCapacity(250);
 
-        try testing.expectEqual(stream.len, 0);
+        try testing.expectEqual(stream.capacity, 250);
         try testing.expectEqual(stream.pos, 0);
-        try testing.expectEqual(stream.buffer.len, 250);
+        try testing.expectEqual(stream.bytes.len, 0);
     }
 
     //trying to guarantee an in place resize for the test
     {
         try stream.ensureCapacity(251);
 
-        try testing.expectEqual(stream.len, 0);
+        try testing.expectEqual(stream.capacity, 251);
         try testing.expectEqual(stream.pos, 0);
-        try testing.expectEqual(stream.buffer.len, 251);
+        try testing.expectEqual(stream.bytes.len, 0);
     }
 }
 
-test "byte-stream/write with space" {
+test "byte-stream/appendingWrite with space" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
 
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
 
-    var written = try stream.write(&bytes);
+    var written = try stream.appendingWrite(&bytes);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(written, 7);
-    try testing.expectEqual(stream.buffer.len, 50);
-    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
 }
 
-test "byte-stream/write multiple" {
+test "byte-stream/appendingWrite multiple" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
 
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
 
-    var written = try stream.write(&bytes);
+    var written = try stream.appendingWrite(&bytes);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(written, 7);
-    try testing.expectEqual(stream.buffer.len, 50);
-    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
 
-    var start = stream.len;
+    var start = stream.bytes.len;
     var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
-    written = try stream.write(&bytes2);
+    written = try stream.appendingWrite(&bytes2);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 13);
+    try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(written, 6);
-    try testing.expectEqual(stream.buffer.len, 50);
-    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+    try testing.expectEqual(stream.bytes.len, 13);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
 }
 
-test "byte-stream/write force grow" {
+test "byte-stream/appendingWrite force grow" {
     var stream = ByteStream().init(std.testing.allocator);
     defer stream.deinit();
 
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
 
-    var written = try stream.write(&bytes);
+    var written = try stream.appendingWrite(&bytes);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 7);
-    try testing.expectEqual(stream.buffer.len, 7);
+    try testing.expectEqual(stream.capacity, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
     try testing.expectEqual(written, 7);
-    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
 
-    var start = stream.len;
+    var start = stream.bytes.len;
     var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
-    written = try stream.write(&bytes2);
+    written = try stream.appendingWrite(&bytes2);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 13);
-    try testing.expectEqual(stream.buffer.len, 13);
+    try testing.expectEqual(stream.capacity, 13);
+    try testing.expectEqual(stream.bytes.len, 13);
     try testing.expectEqual(written, 6);
-    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
 }
 
-test "byte-stream/writeAssumeCapacity with space" {
+test "byte-stream/appendingWriteAssumeCapacity with space" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
 
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
 
-    var written = try stream.writeAssumeCapacity(&bytes);
+    var written = try stream.appendingWriteAssumeCapacity(&bytes);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 7);
+    try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(written, 7);
-    try testing.expectEqual(stream.buffer.len, 50);
-    try testing.expectEqualSlices(u8, &bytes, stream.buffer[0..stream.len]);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
 
-    var start = stream.len;
+    var start = stream.bytes.len;
     var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
-    written = try stream.writeAssumeCapacity(&bytes2);
+    written = try stream.appendingWriteAssumeCapacity(&bytes2);
 
     try testing.expectEqual(stream.pos, 0);
-    try testing.expectEqual(stream.len, 13);
+    try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(written, 6);
-    try testing.expectEqual(stream.buffer.len, 50);
-    try testing.expectEqualSlices(u8, &bytes2, stream.buffer[start..stream.len]);
+    try testing.expectEqual(stream.bytes.len, 13);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
 }
 
-test "byte-stream/writeAssumeCapacity over space" {
+test "byte-stream/appendingWriteAssumeCapacity over space" {
     var stream = ByteStream().init(std.testing.allocator);
     defer stream.deinit();
 
@@ -333,12 +372,14 @@ test "byte-stream/writeAssumeCapacity over space" {
     //testing.expectPanic(try stream.writeAssumeCapacity(&bytes));
 }
 
+//todo seekable writer tests
+
 test "byte-stream/read" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
 
     const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    _ = try stream.write(&bytes);
+    _ = try stream.appendingWrite(&bytes);
 
     var dest: [10]u8 = undefined;
     var read = stream.read(&dest);
@@ -346,7 +387,7 @@ test "byte-stream/read" {
     try testing.expectEqual(read, 10);
     try testing.expectEqualSlices(u8, &bytes, &dest);
     try testing.expectEqual(stream.pos, 10);
-    try testing.expectEqual(stream.len, 10);
+    try testing.expectEqual(stream.capacity, 50);
 }
 
 test "byte-stream/read multiple" {
@@ -354,7 +395,7 @@ test "byte-stream/read multiple" {
     defer stream.deinit();
 
     const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    _ = try stream.write(&bytes);
+    _ = try stream.appendingWrite(&bytes);
 
     var dest1: [5]u8 = undefined;
     var dest2: [4]u8 = undefined;
@@ -369,16 +410,16 @@ test "byte-stream/read multiple" {
     try testing.expectEqualSlices(u8, &dest2, bytes[5..9]);
 
     try testing.expectEqual(stream.pos, 9);
-    try testing.expectEqual(stream.len, 10);
-    try testing.expectEqual(stream.buffer.len, 50);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
 }
 
 test "byte-stream/seekTo happy path" {
-    var stream = ByteStream().initCapacity(std.testing.allocator, 50);
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
 
     const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    _ = try stream.write(&bytes);
+    _ = try stream.appendingWrite(&bytes);
 
     //Now that I write this test, I'm not sure how I want for pos to actually behave
     // on "write".
