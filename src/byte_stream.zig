@@ -372,7 +372,26 @@ test "byte-stream/read multiple" {
     try testing.expectEqual(stream.buffer.len, 50);
 }
 
-test "byte-stream/seekTo" {}
+test "byte-stream/seekTo happy path" {
+    var stream = ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.write(&bytes);
+
+    //Now that I write this test, I'm not sure how I want for pos to actually behave
+    // on "write".
+    //My initial thought was that write would always append.
+    //Now I am considering that perhaps write should advance pos for a few reasons:
+    //    -It kinda makes sense to be able to rewrite parts of the buffer.
+    //    -It appears to be how fixed_buffer_stream works, and I should be consistent
+}
+
+test "byte-stream/seekTo no written bytes" {}
+
+test "byte-stream/seekTo zero length buffer" {}
+
+test "byte-stream/seekTo past end" {}
 
 //test "byte-stream/seekBy" {}
 
