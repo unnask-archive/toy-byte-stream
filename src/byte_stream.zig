@@ -193,10 +193,10 @@ pub fn ByteStream() type {
         }
 
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
-            self.pos = if (std.math.cast(usize, pos)) |p| {
-                @min(self.bytes.len, p);
-            } else {
-                self.bytes.len;
+            self.pos = if (std.math.cast(usize, pos)) |p| v: {
+                break :v @min(self.bytes.len, p);
+            } else v: {
+                break :v self.bytes.len;
             };
         }
 
@@ -449,3 +449,172 @@ test "byte-stream/seekTo past end" {}
 //test "byte-stream/getEndPos" {}
 
 //test "byte-stream/getPos" {}
+
+test "byte-stream/seekableWrite with space" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWrite(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+}
+
+test "byte-stream/seekableWrite multiple" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWrite(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+
+    var start = stream.bytes.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.seekableWrite(&bytes2);
+
+    try testing.expectEqual(stream.pos, 13);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.bytes.len, 13);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
+}
+
+test "byte-stream/seekableWrite force grow" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWrite(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+
+    var start = stream.bytes.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.seekableWrite(&bytes2);
+
+    try testing.expectEqual(stream.pos, 13);
+    try testing.expectEqual(stream.capacity, 13);
+    try testing.expectEqual(stream.bytes.len, 13);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
+}
+
+test "byte-stream/seekableWriteAssumeCapacity with space" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWriteAssumeCapacity(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+
+    var start = stream.bytes.len;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.seekableWriteAssumeCapacity(&bytes2);
+
+    try testing.expectEqual(stream.pos, 13);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.bytes.len, 13);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
+}
+
+test "byte-stream/seekableWriteAssumeCapacity seek back overwrite within len" {
+    var stream = try ByteStream().initCapacity(testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWriteAssumeCapacity(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+
+    try stream.seekTo(0);
+    var start = stream.pos;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.seekableWriteAssumeCapacity(&bytes2);
+
+    try testing.expectEqual(stream.pos, 6);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..bytes2.len]);
+
+    const bytes3 = [_]u8{ 20, 21, 22, 23, 24, 25, 7 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
+}
+
+test "byte-stream/seekableWriteAssumeCapacity seek back overwrite past len" {
+    var stream = try ByteStream().initCapacity(testing.allocator, 50);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+
+    var written = try stream.seekableWriteAssumeCapacity(&bytes);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 7);
+    try testing.expectEqual(stream.bytes.len, 7);
+    try testing.expectEqualSlices(u8, &bytes, stream.bytes);
+
+    try stream.seekTo(3);
+    var start = stream.pos;
+    var bytes2 = [_]u8{ 20, 21, 22, 23, 24, 25 };
+    written = try stream.seekableWriteAssumeCapacity(&bytes2);
+
+    try testing.expectEqual(stream.pos, 9);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(written, 6);
+    try testing.expectEqual(stream.bytes.len, 9);
+    try testing.expectEqualSlices(u8, &bytes2, stream.bytes[start..]);
+
+    const bytes3 = [_]u8{ 1, 2, 3, 20, 21, 22, 23, 24, 25 };
+    try std.testing.expectEqualSlices(u8, &bytes3, stream.bytes);
+}
+
+test "byte-stream/seekableWriteAssumeCapacity over space" {
+    var stream = ByteStream().init(std.testing.allocator);
+    defer stream.deinit();
+
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = bytes;
+
+    //todo: implement an actual test once we can test for panics
+    // Looks like there's no way - yet - to test for panics
+    //testing.expectPanic(try stream.writeAssumeCapacity(&bytes));
+}
