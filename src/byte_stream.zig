@@ -203,15 +203,15 @@ pub fn ByteStream() type {
         pub fn seekBy(self: *Self, amount: i64) SeekError!void {
             // annoyingly, i64 doesn't platform well
 
-            self.pos = if (amount < 0) {
+            self.pos = if (amount < 0) p: {
                 //the std.math functions nicely tell us when a cast fails,
                 // whereas the builtins will cause UB when a number doesn't fit
                 const abs = std.math.cast(usize, std.math.absCast(amount)) orelse std.math.maxInt(usize);
-                self.pos -| abs;
-            } else {
+                break :p self.pos -| abs;
+            } else p: {
                 const cast = std.math.cast(usize, amount) orelse std.math.maxInt(usize);
                 const tmp = cast +| self.pos;
-                @min(self.bytes.len, tmp);
+                break :p @min(self.bytes.len, tmp);
             };
         }
 
@@ -381,8 +381,6 @@ test "byte-stream/appendingWriteAssumeCapacity over space" {
     //testing.expectPanic(try stream.writeAssumeCapacity(&bytes));
 }
 
-//todo seekable writer tests
-
 test "byte-stream/read" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
     defer stream.deinit();
@@ -429,25 +427,150 @@ test "byte-stream/seekTo happy path" {
 
     const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
     _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
 
     try stream.seekTo(3);
 
     try testing.expectEqual(stream.pos, 3);
     try testing.expectEqual(stream.capacity, 50);
     try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
 }
 
-test "byte-stream/seekTo no written bytes" {}
+test "byte-stream/seekTo no written bytes" {
+    var stream = try ByteStream().initCapacity(testing.allocator, 50);
+    defer stream.deinit();
 
-test "byte-stream/seekTo zero length buffer" {}
+    const ptr_check: [*]u8 = stream.bytes.ptr;
 
-test "byte-stream/seekTo past end" {}
+    try stream.seekTo(5);
 
-//test "byte-stream/seekBy" {}
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 0);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
 
-//test "byte-stream/getEndPos" {}
+test "byte-stream/seekTo zero length buffer" {
+    var stream = ByteStream().init(testing.allocator);
+    defer stream.deinit();
 
-//test "byte-stream/getPos" {}
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    try stream.seekTo(5);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 0);
+    try testing.expectEqual(stream.bytes.len, 0);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/seekTo past end" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    try stream.seekTo(100);
+
+    try testing.expectEqual(stream.pos, 10);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/seekBy happy path" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    try stream.seekBy(7);
+
+    try testing.expectEqual(stream.pos, 7);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+
+    try stream.seekBy(-3);
+
+    try testing.expectEqual(stream.pos, 4);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/seekBy past end" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    try stream.seekBy(30);
+
+    try testing.expectEqual(stream.pos, 10);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/seekBy past beginning" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    try stream.seekBy(5);
+    try stream.seekBy(-20);
+
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/getEndPos" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+
+    const end_pos = stream.getEndPos();
+
+    try testing.expectEqual(end_pos, stream.bytes.len);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
+
+test "byte-stream/getPos" {
+    var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
+    defer stream.deinit();
+
+    const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    _ = try stream.appendingWrite(&bytes);
+    const ptr_check: [*]u8 = stream.bytes.ptr;
+    try stream.seekTo(6);
+
+    const pos = stream.getPos();
+
+    try testing.expectEqual(pos, 6);
+    try testing.expectEqual(stream.pos, 6);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
+    try testing.expectEqual(stream.bytes.ptr, ptr_check);
+}
 
 test "byte-stream/seekableWrite with space" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 50);
