@@ -430,12 +430,11 @@ test "byte-stream/seekTo happy path" {
     const bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
     _ = try stream.appendingWrite(&bytes);
 
-    //Now that I write this test, I'm not sure how I want for pos to actually behave
-    // on "write".
-    //My initial thought was that write would always append.
-    //Now I am considering that perhaps write should advance pos for a few reasons:
-    //    -It kinda makes sense to be able to rewrite parts of the buffer.
-    //    -It appears to be how fixed_buffer_stream works, and I should be consistent
+    try stream.seekTo(3);
+
+    try testing.expectEqual(stream.pos, 3);
+    try testing.expectEqual(stream.capacity, 50);
+    try testing.expectEqual(stream.bytes.len, 10);
 }
 
 test "byte-stream/seekTo no written bytes" {}
