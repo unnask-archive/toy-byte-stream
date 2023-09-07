@@ -11,7 +11,7 @@ const testing = std.testing;
 /// buffer will be grown.
 ///
 /// One can also use ByteStream as a fixed buffer as desired.
-pub fn ByteStream(comptime allocator: ?Allocator) type {
+pub fn ByteStream() type {
     return struct {
         const Self = @This();
 
@@ -21,26 +21,26 @@ pub fn ByteStream(comptime allocator: ?Allocator) type {
         pos: usize,
         bytes: []u8,
 
-        pub fn init() Self {
+        pub fn init(allocator: Allocator) Self {
             return Self{
-                .allocator = allocator.?,
+                .allocator = allocator,
                 .capacity = 0,
                 .pos = 0,
                 .bytes = &[_]u8{}, // zero sized []u8 constant
             };
         }
 
-        pub fn initFromOwnedSlice(bytes: []u8) Self {
+        pub fn initFromOwnedSlice(allocator: Allocator, bytes: []u8) Self {
             return Self{
-                .allocator = allocator.?,
+                .allocator = allocator,
                 .capacity = bytes.len,
                 .pos = 0,
                 .bytes = bytes,
             };
         }
 
-        pub fn initCapacity(capacity: usize) Allocator.Error!Self {
-            var self = Self.init(allocator.?);
+        pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
+            var self = Self.init(allocator);
             try self.ensureCapacity(capacity);
 
             return self;
