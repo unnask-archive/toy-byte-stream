@@ -30,7 +30,16 @@ pub fn ByteStream() type {
             };
         }
 
-        pub fn initFromOwnedSlice(allocator: Allocator, bytes: []u8) Self {
+        pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
+            var self = Self.init(allocator);
+            try self.ensureCapacity(capacity);
+
+            return self;
+        }
+
+        ///takes ownership of the byte buffer
+        ///byte buffer must have been allocated with the given allocator
+        pub fn fromOwnedSlice(allocator: Allocator, bytes: []u8) Self {
             return Self{
                 .allocator = allocator,
                 .capacity = bytes.len,
@@ -39,14 +48,7 @@ pub fn ByteStream() type {
             };
         }
 
-        pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
-            var self = Self.init(allocator);
-            try self.ensureCapacity(capacity);
-
-            return self;
-        }
-
-        fn backingSlice(self: *Self) []u8 {
+        fn allocatedSlice(self: *Self) []u8 {
             return self.bytes.ptr[0..self.capacity];
         }
 
@@ -69,7 +71,7 @@ pub fn ByteStream() type {
         }
 
         pub fn deinit(self: *Self) void {
-            self.allocator.free(self.backingSlice());
+            self.allocator.free(self.allocatedSlice());
             self.capacity = 0;
             self.pos = 0;
         }
@@ -79,7 +81,7 @@ pub fn ByteStream() type {
                 return;
             }
 
-            var tmp = self.backingSlice();
+            var tmp = self.allocatedSlice();
 
             if (self.allocator.resize(tmp, new_capacity)) {
                 self.capacity = new_capacity;
@@ -260,7 +262,7 @@ test "byte-stream/init" {
 
 test "byte-stream/initFromOwnedSlice" {
     var bytes = try testing.allocator.alloc(u8, 50);
-    var stream = ByteStream().initFromOwnedSlice(testing.allocator, bytes);
+    var stream = ByteStream().fromOwnedSlice(testing.allocator, bytes);
     defer stream.deinit();
 
     try testing.expectEqual(bytes.ptr, stream.bytes.ptr);
@@ -308,7 +310,7 @@ test "byte-stream/ensureCapacity" {
 
 test "byte-stream/copyOwnedSlice" {
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    var stream = ByteStream().initFromOwnedSlice(testing.allocator, &bytes);
+    var stream = ByteStream().fromOwnedSlice(testing.allocator, &bytes);
 
     var copied = try stream.copyOwnedSlice();
     defer testing.allocator.free(copied);
@@ -321,7 +323,7 @@ test "byte-stream/copyOwnedSlice" {
 
 test "byte-stream/copyIntoSlice" {
     var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    var stream = ByteStream().initFromOwnedSlice(testing.allocator, &bytes);
+    var stream = ByteStream().fromOwnedSlice(testing.allocator, &bytes);
 
     var copied: [10]u8 = undefined;
     stream.copyIntoSlice(&copied);
