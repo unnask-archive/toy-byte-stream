@@ -36,6 +36,15 @@ pub fn ByteStream() type {
             };
         }
 
+        pub fn initFromOwnedSlice(allocator: Allocator, bytes: []u8) Self {
+            return Self{
+                .allocator = allocator,
+                .capacity = bytes.len,
+                .pos = 0,
+                .bytes = bytes,
+            };
+        }
+
         pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
             var self = Self.init(allocator);
             try self.ensureCapacity(capacity);
@@ -45,6 +54,24 @@ pub fn ByteStream() type {
 
         fn backingSlice(self: *Self) []u8 {
             return self.bytes.ptr[0..self.capacity];
+        }
+
+        pub fn copyOwnedSlice(self: *Self) Allocator.Error![]u8 {
+            var ret = try self.allocator.alloc(u8, self.bytes.len);
+            @memcpy(ret, self.bytes);
+            self.reset();
+
+            return ret;
+        }
+
+        pub fn copyIntoSlice(self: *Self, dest: []u8) void {
+            @memcpy(dest, self.bytes[0..dest.len]);
+            self.reset();
+        }
+
+        pub fn reset(self: *Self) void {
+            self.bytes.len = 0;
+            self.pos = 0;
         }
 
         pub fn deinit(self: *Self) void {
@@ -237,6 +264,17 @@ test "byte-stream/init" {
     try testing.expectEqual(stream.bytes.ptr, ptr_check);
 }
 
+test "byte-stream/initFromOwnedSlice" {
+    var bytes = try testing.allocator.alloc(u8, 50);
+    var stream = ByteStream().initFromOwnedSlice(testing.allocator, bytes);
+    defer stream.deinit();
+
+    try testing.expectEqual(bytes.ptr, stream.bytes.ptr);
+    try testing.expectEqual(bytes.len, stream.capacity);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(bytes.len, stream.bytes.len);
+}
+
 test "byte-stream/initCapacity" {
     var stream = try ByteStream().initCapacity(std.testing.allocator, 123);
     defer stream.deinit();
@@ -272,6 +310,32 @@ test "byte-stream/ensureCapacity" {
         try testing.expectEqual(stream.pos, 0);
         try testing.expectEqual(stream.bytes.len, 0);
     }
+}
+
+test "byte-stream/copyOwnedSlice" {
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    var stream = ByteStream().initFromOwnedSlice(testing.allocator, &bytes);
+
+    var copied = try stream.copyOwnedSlice();
+    defer testing.allocator.free(copied);
+
+    try testing.expectEqualSlices(u8, &bytes, copied);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 10);
+    try testing.expectEqual(stream.bytes.len, 0);
+}
+
+test "byte-stream/copyIntoSlice" {
+    var bytes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    var stream = ByteStream().initFromOwnedSlice(testing.allocator, &bytes);
+
+    var copied: [10]u8 = undefined;
+    stream.copyIntoSlice(&copied);
+
+    try testing.expectEqualSlices(u8, &bytes, &copied);
+    try testing.expectEqual(stream.pos, 0);
+    try testing.expectEqual(stream.capacity, 10);
+    try testing.expectEqual(stream.bytes.len, 0);
 }
 
 test "byte-stream/appendingWrite with space" {
