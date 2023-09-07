@@ -3,8 +3,6 @@ const io = std.io;
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
-// this should follow the general stream ideas as seen in std.io.
-
 //read()
 //reader()
 //write()
