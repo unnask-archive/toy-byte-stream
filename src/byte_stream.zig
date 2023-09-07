@@ -3,7 +3,6 @@ const io = std.io;
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
-//read()
 //reader()
 //write()
 //writeAssumeCapacity()
