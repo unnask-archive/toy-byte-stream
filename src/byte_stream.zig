@@ -3,18 +3,15 @@ const io = std.io;
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
-//reader()
-//write()
-//writeAssumeCapacity()
-//writer()
-//writerAssumeCapacity()
-// Main difference being that we're providing writers that can either
-// grow the backing array, or assume capacity as necessary.
-//
-
 //todo: play around with whether keeping the allocator reference
 //      is nicer to use
-pub fn ByteStream() type {
+
+/// ByteStream provides some convenience around byte buffers that are of unknown
+/// size. By using a writer that that does not assume capacity, the backing byte
+/// buffer will be grown.
+///
+/// One can also use ByteStream as a fixed buffer as desired.
+pub fn ByteStream(comptime allocator: ?Allocator) type {
     return struct {
         const Self = @This();
 
@@ -24,26 +21,26 @@ pub fn ByteStream() type {
         pos: usize,
         bytes: []u8,
 
-        pub fn init(allocator: Allocator) Self {
+        pub fn init() Self {
             return Self{
-                .allocator = allocator,
+                .allocator = allocator.?,
                 .capacity = 0,
                 .pos = 0,
                 .bytes = &[_]u8{}, // zero sized []u8 constant
             };
         }
 
-        pub fn initFromOwnedSlice(allocator: Allocator, bytes: []u8) Self {
+        pub fn initFromOwnedSlice(bytes: []u8) Self {
             return Self{
-                .allocator = allocator,
+                .allocator = allocator.?,
                 .capacity = bytes.len,
                 .pos = 0,
                 .bytes = bytes,
             };
         }
 
-        pub fn initCapacity(allocator: Allocator, capacity: usize) Allocator.Error!Self {
-            var self = Self.init(allocator);
+        pub fn initCapacity(capacity: usize) Allocator.Error!Self {
+            var self = Self.init(allocator.?);
             try self.ensureCapacity(capacity);
 
             return self;
